@@ -1,4 +1,4 @@
-# app.py — VR Stroke Screening (simple, user-friendly)
+# app.py — VR Stroke Screening (auto-matches model features; simple, friendly UI)
 # Run: streamlit run app.py
 
 import os, io, glob
@@ -10,29 +10,51 @@ import matplotlib.pyplot as plt
 
 from typing import Optional, Tuple
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix
 
 st.set_page_config(page_title="VR Stroke Screening", layout="wide")
 st.title("VR Stroke Screening")
 
-DATA_DIR = os.path.join(os.getcwd(), "data")
-MODEL_PATH = os.path.join("models", "stroke_classifier_from_raw.pkl")
-CSV_CANDIDATES = ["vr_feature_summary.csv", "vr_combined_raw.csv", "all_vr_data_raw.csv"]
+# -----------------------------
+# Paths
+# -----------------------------
+DATA_DIRS = ["data", "."]
+MODEL_PATHS = [
+    os.path.join("models", "stroke_classifier_from_raw.pkl"),
+    "stroke_classifier_from_raw.pkl",
+]
+
+CSV_CANDIDATES = ["vr_combined_raw.csv", "vr_feature_summary.csv", "all_vr_data_raw.csv"]
 TXT_NAMES = [
     "HeadPositionS.txt","HeadRotationS.txt","LeftEyeRotationS.txt","RightEyeRotationS.txt",
     "HeadPositionNS.txt","HeadRotationNS.txt","LeftEyeRotationNS.txt","RightEyeRotationNS.txt",
 ]
 
+# -----------------------------
+# Utils
+# -----------------------------
 def exists(path: str) -> bool:
     return os.path.exists(path) and os.path.getsize(path) > 0
 
-def load_first_csv() -> Optional[pd.DataFrame]:
-    for name in CSV_CANDIDATES:
-        p = os.path.join(DATA_DIR, name)
+def try_load_model():
+    for p in MODEL_PATHS:
         if exists(p):
-            return pd.read_csv(p)
-    return None
+            try:
+                return joblib.load(p), p
+            except Exception:
+                pass
+    return None, None
+
+def try_load_csv():
+    for base in DATA_DIRS:
+        for name in CSV_CANDIDATES:
+            p = os.path.join(base, name)
+            if exists(p):
+                try:
+                    df = pd.read_csv(p)
+                    return df, p
+                except Exception:
+                    pass
+    return None, None
 
 def parse_record_line(line: str) -> Optional[Tuple[float, float, float, float]]:
     try:
@@ -63,22 +85,25 @@ def read_vr_txt(fp: str) -> Optional[pd.DataFrame]:
         df["timestamp"] = df["timestamp_raw"] - start
     return df.drop(columns=["timestamp_raw"])
 
-def load_txt_bundle() -> dict:
+def load_txt_bundle():
     bundle = {}
-    if not os.path.isdir(DATA_DIR): return bundle
-    for name in TXT_NAMES:
-        fp = os.path.join(DATA_DIR, name)
-        if exists(fp):
-            d = read_vr_txt(fp)
-            if d is not None and not d.empty:
-                bundle[os.path.splitext(name)[0]] = d
-    for fp in glob.glob(os.path.join(DATA_DIR, "*.txt")):
-        base = os.path.basename(fp)
-        if base in TXT_NAMES: continue
-        if exists(fp):
-            d = read_vr_txt(fp)
-            if d is not None and not d.empty:
-                bundle[os.path.splitext(base)[0]] = d
+    for base in DATA_DIRS:
+        if not os.path.isdir(base): continue
+        # expected first
+        for name in TXT_NAMES:
+            p = os.path.join(base, name)
+            if exists(p):
+                d = read_vr_txt(p)
+                if d is not None and not d.empty:
+                    bundle[os.path.splitext(name)[0]] = d
+        # any other txt
+        for p in glob.glob(os.path.join(base, "*.txt")):
+            base_name = os.path.basename(p)
+            if base_name in TXT_NAMES: continue
+            if exists(p):
+                d = read_vr_txt(p)
+                if d is not None and not d.empty:
+                    bundle[os.path.splitext(base_name)[0]] = d
     return bundle
 
 def assemble_table(bundle: dict) -> Optional[pd.DataFrame]:
@@ -87,8 +112,7 @@ def assemble_table(bundle: dict) -> Optional[pd.DataFrame]:
     base = bundle[first_key].copy()
     base["timestamp"] = base["timestamp"].astype(float)
     wide = pd.DataFrame({"timestamp": base["timestamp"]})
-    def role(k: str) -> str:
-        return "eye" if "eye" in k.lower() else "head"
+    def role(k: str) -> str: return "eye" if "eye" in k.lower() else "head"
     for key, df in bundle.items():
         r = role(key)
         n = min(len(wide), len(df))
@@ -98,13 +122,7 @@ def assemble_table(bundle: dict) -> Optional[pd.DataFrame]:
         wide.loc[:n-1, f"{r}_z"] = df["z"].values[:n]
     for c in ["head_x","head_y","head_z","eye_x","eye_y","eye_z"]:
         if c not in wide.columns: wide[c] = np.nan
-    if any(k.lower().endswith("s") for k in bundle.keys()) and not any("ns" in k.lower() or "non" in k.lower() for k in bundle.keys()):
-        lab = "Stroke"
-    elif any("ns" in k.lower() or "non" in k.lower() for k in bundle.keys()) and not any(k.lower().endswith("s") for k in bundle.keys()):
-        lab = "Non-Stroke"
-    else:
-        lab = "Unknown"
-    wide["label"] = lab
+    wide["label"] = "Unknown"
     return wide[["timestamp","head_x","head_y","head_z","eye_x","eye_y","eye_z","label"]]
 
 def compute_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -132,18 +150,6 @@ def compute_features(df: pd.DataFrame) -> pd.DataFrame:
                     out[f"{c}_vel_std"]  = np.nanstd(vel)
     return pd.DataFrame([out])
 
-def window_iter(df: pd.DataFrame, size:int=400, step:int=400):
-    for start in range(0, len(df), step):
-        chunk = df.iloc[start:start+size]
-        if len(chunk) >= max(100, size//2):
-            yield start, chunk
-
-def plot_series(x, y, title):
-    fig, ax = plt.subplots()
-    ax.plot(x, y)
-    ax.set_title(title); ax.set_xlabel("Time (s)"); ax.set_ylabel("Value")
-    st.pyplot(fig)
-
 def align_to_model(model, feats_df: pd.DataFrame) -> np.ndarray:
     if hasattr(model, "feature_names_in_"):
         cols = list(model.feature_names_in_)
@@ -151,19 +157,24 @@ def align_to_model(model, feats_df: pd.DataFrame) -> np.ndarray:
     return feats_df.select_dtypes(include=[np.number]).to_numpy()
 
 def map_label(model, yhat):
-    # prefer string classes if available
     if hasattr(model, "classes_"):
         classes = list(model.classes_)
         if set(classes) == {0,1}:
             return "Stroke" if int(yhat) == 1 else "Non-Stroke"
-        # fallback for string labels
         return str(yhat)
     return "Stroke" if int(yhat) == 1 else "Non-Stroke"
 
-# Load data (auto)
-csv_df = load_first_csv()
+# -----------------------------
+# Load model + data
+# -----------------------------
+model, model_path = try_load_model()
+if model is None:
+    st.error("Model file not found. Add models/stroke_classifier_from_raw.pkl")
+    st.stop()
+
+csv_df, csv_path = try_load_csv()
 if csv_df is not None:
-    df_raw = csv_df
+    df_raw = csv_df.copy()
 else:
     bundle = load_txt_bundle()
     df_raw = assemble_table(bundle) if bundle else pd.DataFrame(columns=["timestamp","head_x","head_y","head_z","eye_x","eye_y","eye_z","label"])
@@ -175,112 +186,154 @@ if "timestamp" not in df_raw.columns:
 if "label" not in df_raw.columns:
     df_raw["label"] = "Unknown"
 
-# Try preload model
-model = None
-if exists(MODEL_PATH):
-    try:
-        model = joblib.load(MODEL_PATH)
-    except Exception:
-        model = None
+# -----------------------------
+# Decide input mode from model's expected features
+# -----------------------------
+if hasattr(model, "feature_names_in_"):
+    expected = list(model.feature_names_in_)
+else:
+    # try to infer from training data you used previously
+    expected = ["x", "y", "z"]
 
-# ========= Top: Simple Prediction =========
+simple_numeric_mode = False
+if len(expected) <= 6 and all(k.lower() in {"x","y","z","x1","y1","z1"} or k.lower() in {"x_axis","y_axis","z_axis"} for k in expected):
+    simple_numeric_mode = True
+elif expected == ["x","y","z"]:
+    simple_numeric_mode = True
+
+# -----------------------------
+# TOP: Quick Prediction (user-friendly)
+# -----------------------------
 st.header("Quick Check")
 
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    head_stability = st.slider("Head stability", 0.0, 1.0, 0.7, 0.01)
-with col2:
-    eye_fixation   = st.slider("Eye fixation", 0.0, 1.0, 0.7, 0.01)
-with col3:
-    head_range     = st.slider("Head movement range", 0.0, 2.0, 0.5, 0.01)
-with col4:
-    eye_range      = st.slider("Eye movement range", 0.0, 1.0, 0.2, 0.01)
+if simple_numeric_mode:
+    # Infer slider ranges from data if possible
+    ref = None
+    for col in ["x","y","z"]:
+        if col in df_raw.columns:
+            ref = df_raw
+            break
+    if ref is None:
+        # try typical ranges from your old app
+        x_min, x_max = -20.0, 20.0
+        y_min, y_max = -50.0, 150.0
+        z_min, z_max = -20.0, 20.0
+    else:
+        # robust percentiles if present
+        def rng(c, lo, hi):
+            if c in ref.columns and ref[c].notna().any():
+                q1, q99 = np.nanpercentile(ref[c], [1, 99])
+                if np.isfinite(q1) and np.isfinite(q99) and q1 != q99:
+                    return float(q1), float(q99)
+            return lo, hi
+        x_min, x_max = rng("x", -20.0, 20.0)
+        y_min, y_max = rng("y", -50.0, 150.0)
+        z_min, z_max = rng("z", -20.0, 20.0)
 
-sensitivity = st.slider("Sensitivity", 0.5, 5.0, 2.5, 0.1)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        x_val = st.slider("X-axis motion", float(x_min), float(x_max), float((x_min+x_max)/2.0))
+    with c2:
+        y_val = st.slider("Y-axis motion", float(y_min), float(y_max), float((y_min+y_max)/2.0))
+    with c3:
+        z_val = st.slider("Z-axis motion", float(z_min), float(z_max), float((z_min+z_max)/2.0))
 
-btn_cols = st.columns([1,1,6])
-with btn_cols[0]:
-    b_demo = st.button("Predict from sliders")
-with btn_cols[1]:
-    b_data = st.button("Predict from data")
+    if st.button("Predict"):
+        # Build input exactly as model expects
+        cols = expected if expected else ["x","y","z"]
+        row = []
+        for name in cols:
+            nl = name.lower()
+            if "x" == nl or "x_axis" == nl or nl.startswith("x"):
+                row.append(x_val)
+            elif "y" == nl or "y_axis" == nl or nl.startswith("y"):
+                row.append(y_val)
+            elif "z" == nl or "z_axis" == nl or nl.startswith("z"):
+                row.append(z_val)
+            else:
+                row.append(0.0)
+        X = np.array([row], dtype=float)
 
-def predict_from_sliders():
-    if model is None:
-        st.write("Model not found.")
-        return
-    base = compute_features(df_raw)
-    if hasattr(model, "feature_names_in_"):
-        for c in model.feature_names_in_:
-            if c not in base.columns:
-                base[c] = 0.0
-    demo = base.copy()
+        yhat = model.predict(X)[0]
+        label = map_label(model, yhat)
+        st.subheader(f"Result: {label}")
+        if hasattr(model, "predict_proba"):
+            proba = model.predict_proba(X)[0]
+            classes = list(getattr(model, "classes_", [0,1]))
+            stroke_idx = 1 if set(classes) == {0,1} else classes.index(next((c for c in classes if "stroke" in str(c).lower() and "non" not in str(c).lower()), classes[-1]))
+            pct = float(proba[stroke_idx])
+            st.progress(pct)
+            st.write(f"Stroke probability: {pct*100:.1f}%")
+else:
+    # Fallback: engineered feature mode (kept simple)
+    st.write("Move the controls and check the result.")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        head_stability = st.slider("Head stability", 0.0, 1.0, 0.7, 0.01)
+    with col2:
+        eye_fixation   = st.slider("Eye fixation", 0.0, 1.0, 0.7, 0.01)
+    with col3:
+        head_range     = st.slider("Head movement range", 0.0, 2.0, 0.5, 0.01)
+    with col4:
+        eye_range      = st.slider("Eye movement range", 0.0, 1.0, 0.2, 0.01)
+
+    sensitivity = st.slider("Sensitivity", 0.5, 5.0, 2.5, 0.1)
+
     def clamp(x, lo, hi): return max(lo, min(hi, x))
-    for col in demo.columns:
-        lc = col.lower()
-        if ("std" in lc or "vel_std" in lc) and ("head" in lc):
-            demo[col] = demo[col].astype(float) * (1.0 + sensitivity*(1.0 - head_stability))
-        if ("std" in lc or "vel_std" in lc) and ("eye" in lc):
-            demo[col] = demo[col].astype(float) * (1.0 + sensitivity*(1.0 - eye_fixation))
-        if "mean" in lc and "head" in lc:
-            demo[col] = demo[col].astype(float) + 0.1*sensitivity*(0.5 - head_stability)
-        if "mean" in lc and "eye" in lc:
-            demo[col] = demo[col].astype(float) + 0.1*sensitivity*(0.5 - eye_fixation)
-        if "max" in lc and "head" in lc:
-            demo[col] = demo[col].astype(float) * clamp(head_range, 0.1, 2.0)
-        if "min" in lc and "head" in lc:
-            demo[col] = demo[col].astype(float) * clamp(head_range, 0.1, 2.0)
-        if "max" in lc and "eye" in lc:
-            demo[col] = demo[col].astype(float) * clamp(eye_range, 0.05, 1.0)
-        if "min" in lc and "eye" in lc:
-            demo[col] = demo[col].astype(float) * clamp(eye_range, 0.05, 1.0)
-        if "vel_mean" in lc and "head" in lc:
-            demo[col] = demo[col].astype(float) * (0.5 + 0.25*sensitivity*head_range)
-        if "vel_mean" in lc and "eye" in lc:
-            demo[col] = demo[col].astype(float) * (0.5 + 0.25*sensitivity*eye_range)
 
-    X = align_to_model(model, demo)
-    yhat = model.predict(X)[0]
-    pred_label = map_label(model, yhat)
-    st.subheader(f"Result: {pred_label}")
-    if hasattr(model, "predict_proba"):
-        proba = model.predict_proba(X)[0]
-        classes = list(getattr(model, "classes_", [0,1]))
-        # pick index for "Stroke"
-        if set(classes) == {0,1}:
-            stroke_idx = 1
+    if st.button("Predict"):
+        base = compute_features(df_raw)
+        # ensure all expected columns exist
+        if hasattr(model, "feature_names_in_"):
+            for c in model.feature_names_in_:
+                if c not in base.columns:
+                    base[c] = 0.0
+        demo = base.copy()
+        for col in demo.columns:
+            lc = col.lower()
+            if ("std" in lc or "vel_std" in lc) and ("head" in lc):
+                demo[col] = demo[col].astype(float) * (1.0 + sensitivity*(1.0 - head_stability))
+            if ("std" in lc or "vel_std" in lc) and ("eye" in lc):
+                demo[col] = demo[col].astype(float) * (1.0 + sensitivity*(1.0 - eye_fixation))
+            if "mean" in lc and "head" in lc:
+                demo[col] = demo[col].astype(float) + 0.1*sensitivity*(0.5 - head_stability)
+            if "mean" in lc and "eye" in lc:
+                demo[col] = demo[col].astype(float) + 0.1*sensitivity*(0.5 - eye_fixation)
+            if "max" in lc and "head" in lc:
+                demo[col] = demo[col].astype(float) * clamp(head_range, 0.1, 2.0)
+            if "min" in lc and "head" in lc:
+                demo[col] = demo[col].astype(float) * clamp(head_range, 0.1, 2.0)
+            if "max" in lc and "eye" in lc:
+                demo[col] = demo[col].astype(float) * clamp(eye_range, 0.05, 1.0)
+            if "min" in lc and "eye" in lc:
+                demo[col] = demo[col].astype(float) * clamp(eye_range, 0.05, 1.0)
+            if "vel_mean" in lc and "head" in lc:
+                demo[col] = demo[col].astype(float) * (0.5 + 0.25*sensitivity*head_range)
+            if "vel_mean" in lc and "eye" in lc:
+                demo[col] = demo[col].astype(float) * (0.5 + 0.25*sensitivity*eye_range)
+
+        if hasattr(model, "feature_names_in_"):
+            X = demo.reindex(columns=list(model.feature_names_in_), fill_value=0.0).to_numpy()
         else:
-            stroke_idx = classes.index(next((c for c in classes if "stroke" in str(c).lower() and "non" not in str(c).lower()), classes[-1]))
-        pct = float(proba[stroke_idx])
-        st.progress(pct)
-        st.write(f"Stroke probability: {pct*100:.1f}%")
+            X = demo.select_dtypes(include=[np.number]).to_numpy()
 
-def predict_from_data():
-    if model is None:
-        st.write("Model not found.")
-        return
-    feats = compute_features(df_raw)
-    X = align_to_model(model, feats)
-    yhat = model.predict(X)[0]
-    pred_label = map_label(model, yhat)
-    st.subheader(f"Result: {pred_label}")
-    if hasattr(model, "predict_proba"):
-        proba = model.predict_proba(X)[0]
-        classes = list(getattr(model, "classes_", [0,1]))
-        if set(classes) == {0,1}:
-            stroke_idx = 1
-        else:
-            stroke_idx = classes.index(next((c for c in classes if "stroke" in str(c).lower() and "non" not in str(c).lower()), classes[-1]))
-        pct = float(proba[stroke_idx])
-        st.progress(pct)
-        st.write(f"Stroke probability: {pct*100:.1f}%")
-
-if b_demo: predict_from_sliders()
-if b_data: predict_from_data()
+        yhat = model.predict(X)[0]
+        label = map_label(model, yhat)
+        st.subheader(f"Result: {label}")
+        if hasattr(model, "predict_proba"):
+            proba = model.predict_proba(X)[0]
+            classes = list(getattr(model, "classes_", [0,1]))
+            stroke_idx = 1 if set(classes) == {0,1} else classes.index(next((c for c in classes if "stroke" in str(c).lower() and "non" not in str(c).lower()), classes[-1]))
+            pct = float(proba[stroke_idx])
+            st.progress(pct)
+            st.write(f"Stroke probability: {pct*100:.1f}%")
 
 st.divider()
 
-# ========= Tabs (simple wording) =========
-tab1, tab2, tab3, tab4 = st.tabs(["Data Preview", "Charts", "Windows", "Train (optional)"])
+# -----------------------------
+# Tabs (kept simple)
+# -----------------------------
+tab1, tab2 = st.tabs(["Data Preview", "Charts"])
 
 with tab1:
     st.subheader("Data Preview")
@@ -288,57 +341,11 @@ with tab1:
 
 with tab2:
     st.subheader("Charts")
-    t = pd.to_numeric(df_raw["timestamp"], errors="coerce")
-    for col in ["head_x","head_y","head_z","eye_x","eye_y","eye_z"]:
-        if col in df_raw.columns and df_raw[col].notna().any():
-            fig, ax = plt.subplots()
-            ax.plot(t, pd.to_numeric(df_raw[col], errors="coerce"))
-            ax.set_title(col)
-            ax.set_xlabel("Time (s)")
-            ax.set_ylabel("Value")
-            st.pyplot(fig)
-
-with tab3:
-    st.subheader("Window Summary")
-    size = st.slider("Window size (samples)", 100, 3000, 500, step=50)
-    step = st.slider("Step (samples)", 50, 3000, 500, step=50)
-    feats, labels, starts = [], [], []
-    for idx, chunk in window_iter(df_raw, size=size, step=step):
-        f = compute_features(chunk)
-        f["window_start"] = idx
-        feats.append(f)
-        labels.append(chunk["label"].mode().iloc[0] if "label" in chunk.columns and not chunk["label"].dropna().empty else "Unknown")
-        starts.append(idx)
-    if feats:
-        feats_df = pd.concat(feats, ignore_index=True)
-        feats_df["label"] = labels
-        st.dataframe(feats_df.head(30), use_container_width=True)
-    else:
-        st.write("Not enough rows for the selected settings.")
-
-with tab4:
-    st.subheader("Train on This Data (optional)")
-    if "feats_df" not in locals():
-        feats_df = compute_features(df_raw)
-        feats_df["label"] = df_raw["label"].mode().iloc[0] if "label" in df_raw.columns else "Unknown"
-    X = feats_df.select_dtypes(include=[np.number]).copy()
-    y = feats_df["label"] if "label" in feats_df.columns else pd.Series(["Unknown"]*len(X))
-    if y.nunique() >= 2 and len(X) >= 6:
-        Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
-        clf = RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1)
-        clf.fit(Xtr, ytr)
-        ypred = clf.predict(Xte)
-        st.code(classification_report(yte, ypred), language="text")
-        cm = confusion_matrix(yte, ypred, labels=sorted(y.unique()))
-        fig, ax = plt.subplots()
-        ax.imshow(cm)
-        ax.set_xticks(range(len(sorted(y.unique())))); ax.set_yticks(range(len(sorted(y.unique()))))
-        ax.set_xticklabels(sorted(y.unique()), rotation=45, ha="right"); ax.set_yticklabels(sorted(y.unique()))
-        ax.set_xlabel("Predicted"); ax.set_ylabel("True")
-        st.pyplot(fig)
-        if st.button("Save trained model"):
-            os.makedirs("models", exist_ok=True)
-            joblib.dump(clf, os.path.join("models","stroke_classifier.pkl"))
-            st.write("Saved: models/stroke_classifier.pkl")
-    else:
-        st.write("Need at least two different labels to train.")
+    if "timestamp" in df_raw.columns:
+        t = pd.to_numeric(df_raw["timestamp"], errors="coerce")
+        for col in ["head_x","head_y","head_z","eye_x","eye_y","eye_z"]:
+            if col in df_raw.columns and df_raw[col].notna().any():
+                fig, ax = plt.subplots()
+                ax.plot(t, pd.to_numeric(df_raw[col], errors="coerce"))
+                ax.set_title(col); ax.set_xlabel("Time (s)"); ax.set_ylabel("Value")
+                st.pyplot(fig)
