@@ -36,10 +36,6 @@ representing spatial and rotational movement patterns during VR tasks.
 3. **Model Training** – Random Forest Classifier (0.89 accuracy)  
 4. **Evaluation** – Confusion matrix, feature importance visualization  
 
-Code files:
-- `strokesl.py` - main ML pipeline  
-- `stroke_analysis.ipynb` - EDA, visualization, and model validation
-
 ---
 
 ## Tech Stack
