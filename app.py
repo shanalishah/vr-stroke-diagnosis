@@ -1,4 +1,4 @@
-# app.py — VR Stroke Diagnosis Demo (executive-friendly + technical tabs)
+# app.py — VR-Enabled Stroke Assessment Platform (Executive + Technical)
 # Run: streamlit run app.py
 
 import os
@@ -16,11 +16,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Page setup
+# Page & constants
 # ──────────────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="VR Stroke Diagnosis — Motion & Eye Tracking", layout="wide")
-st.title("🧠 VR-Based Stroke Diagnosis — Executive Demo + Technical Explorer")
-st.caption("Portfolio demo. Not for clinical use. Additional validation & regulatory approvals are required for real-world deployment.")
+st.set_page_config(page_title="VR-Enabled Stroke Assessment", layout="wide")
+st.title("🧠 VR-Enabled Stroke Assessment — Executive Overview & Technical Insights")
+st.caption("Prototype demonstration for research/innovation discussions only. Not approved for clinical diagnosis or patient care.")
 
 DATA_DIR = os.path.join(os.getcwd(), "data")
 CSV_CANDIDATES = ["vr_feature_summary.csv", "vr_combined_raw.csv", "all_vr_data_raw.csv"]
@@ -31,10 +31,20 @@ DEFAULT_TXT_FILES = [
 DEFAULT_MODEL_PATH = os.path.join("models", "stroke_classifier_from_raw.pkl")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Helpers
+# Utilities
 # ──────────────────────────────────────────────────────────────────────────────
 def exists(path: str) -> bool:
     return os.path.exists(path) and (os.path.getsize(path) > 0)
+
+def safe_json(obj):
+    """Convert numpy / Pandas scalars to native Python types for Streamlit display."""
+    if isinstance(obj, (np.generic, np.number)):
+        return obj.item()
+    if isinstance(obj, dict):
+        return {str(k): safe_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [safe_json(v) for v in obj]
+    return obj
 
 def load_first_existing_csv() -> Optional[pd.DataFrame]:
     """Prefer feature/combined CSVs if present in ./data."""
@@ -43,7 +53,7 @@ def load_first_existing_csv() -> Optional[pd.DataFrame]:
         if exists(p):
             try:
                 df = pd.read_csv(p)
-                st.toast(f"Loaded CSV: {name}  shape={df.shape}", icon="✅")
+                st.success(f"Loaded CSV: `{name}`  shape={df.shape}")
                 return df
             except Exception as e:
                 st.warning(f"Found `{name}` but failed to read: {e}")
@@ -63,8 +73,7 @@ def parse_record_line(line: str) -> Optional[Tuple[float, float, float, float]]:
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 5:
             return None
-        # time token -> seconds
-        t = parts[0]
+        t = parts[0]  # HH:MM:SS(.ms) or other
         sec = np.nan
         if ":" in t:
             hh, mm, ss = t.split(":")
@@ -121,7 +130,7 @@ def load_repo_txt_bundle() -> dict:
 
 def assemble_wide_table(bundle: dict) -> Optional[pd.DataFrame]:
     """
-    Merge available series into a single wide table with columns:
+    Merge available series into a single wide table:
     timestamp, head_x, head_y, head_z, eye_x, eye_y, eye_z, label
     """
     if not bundle:
@@ -216,7 +225,7 @@ def align_features_to_model(model, feats_df: pd.DataFrame) -> np.ndarray:
     return feats_df.select_dtypes(include=[np.number]).to_numpy()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Load/prep data (for technical tabs; Quick Demo works without files)
+# Sidebar: data source for technical tabs
 # ──────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Data Source (for Technical Tabs)")
@@ -236,7 +245,7 @@ if source == "Auto-load from ./data":
             df_raw = assemble_wide_table(bundle)
             data_note = "Assembled from TXT logs in ./data"
 elif source == "Upload CSV":
-    up = st.sidebar.file_uploader("Upload CSV (columns: timestamp, head_x, head_y, head_z, eye_x, eye_y, eye_z, optional label)", type=["csv"])
+    up = st.sidebar.file_uploader("Upload CSV (timestamp, head_x/y/z, eye_x/y/z, optional label)", type=["csv"])
     if up is not None:
         try:
             df_raw = pd.read_csv(up)
@@ -244,7 +253,8 @@ elif source == "Upload CSV":
         except Exception as e:
             st.sidebar.error(f"Failed to read CSV: {e}")
 elif source == "Upload raw .txt bundle":
-    ups = st.sidebar.file_uploader("Upload 2–8 .txt logs (HeadPosition*, HeadRotation*, Left/RightEyeRotation*)", type=["txt","log"], accept_multiple_files=True)
+    ups = st.sidebar.file_uploader("Upload 2–8 .txt logs (HeadPosition*, HeadRotation*, Left/RightEyeRotation*)",
+                                   type=["txt","log"], accept_multiple_files=True)
     if ups:
         bundle = {}
         for f in ups:
@@ -268,7 +278,7 @@ elif source == "Upload raw .txt bundle":
             df_raw = assemble_wide_table(bundle)
             data_note = "Uploaded TXT bundle"
 
-# Basic hygiene if df_raw exists
+# Hygiene if df_raw exists
 if df_raw is not None:
     for c in ["head_x","head_y","head_z","eye_x","eye_y","eye_z"]:
         if c not in df_raw.columns:
@@ -279,12 +289,12 @@ if df_raw is not None:
         df_raw["label"] = "unknown"
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Quick Prediction (executive-friendly) — shown FIRST
+# QUICK PREDICTION (Executive-friendly) — shown FIRST
 # ──────────────────────────────────────────────────────────────────────────────
-st.markdown("## 🚀 Quick Prediction (No Files Needed)")
-st.write("Move the sliders to simulate patient motion/eye behavior. The pretrained model will predict *stroke* or *non_stroke*. This is a simplified UX for non-technical stakeholders.")
+st.markdown("## 🎛️ Interactive Simulation: Rapid Assessment")
+st.write("Adjust the parameters to simulate head–eye behavior. The pretrained model estimates the likelihood of **stroke** vs **non-stroke** patterns.")
 
-# Load pretrained model if available (and keep reference for later tabs)
+# Load pretrained model for quick demo
 clf_pretrained = None
 if exists(DEFAULT_MODEL_PATH):
     try:
@@ -293,18 +303,19 @@ if exists(DEFAULT_MODEL_PATH):
     except Exception as e:
         st.warning(f"Pretrained model found but failed to load: {e}")
 
-colA, colB, colC, colD = st.columns(4)
-with colA:
-    head_stability = st.slider("Head stability", 0.0, 1.0, 0.6, 0.01, help="Higher = steadier head (lower noise)")
-with colB:
-    eye_fixation   = st.slider("Eye fixation", 0.0, 1.0, 0.6, 0.01, help="Higher = steadier gaze (lower noise)")
-with colC:
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    head_stability = st.slider("Head stability", 0.0, 1.0, 0.6, 0.01,
+                               help="Higher = steadier head (lower variability)")
+with c2:
+    eye_fixation   = st.slider("Eye fixation", 0.0, 1.0, 0.6, 0.01,
+                               help="Higher = steadier gaze (lower variability)")
+with c3:
     head_range     = st.slider("Head movement range", 0.0, 2.0, 0.5, 0.01)
-with colD:
+with c4:
     eye_range      = st.slider("Eye movement range", 0.0, 1.0, 0.2, 0.01)
 
-btn = st.button("🧠 Predict from sliders", type="primary")
-if btn:
+if st.button("🧠 Predict from sliders", type="primary"):
     if clf_pretrained is None:
         st.warning("No pretrained model available. Add `models/stroke_classifier_from_raw.pkl` or upload a model in the tabs below.")
     else:
@@ -324,7 +335,7 @@ if btn:
             ]
         demo = pd.DataFrame(columns=cols); demo.loc[0] = 0.0
 
-        # Map sliders -> plausible feature values (heuristic mapping for demo)
+        # Heuristic mapping from sliders → features
         for name in demo.columns:
             nl = name.lower()
             if "eye" in nl and "std" in nl:
@@ -342,15 +353,28 @@ if btn:
 
         X_demo = align_features_to_model(clf_pretrained, demo)
         pred = clf_pretrained.predict(X_demo)[0]
-        st.markdown(f"### 🧩 Predicted condition: `{pred}`")
+
+        # Emphasized result card
+        color = "#C1E1C1" if str(pred).lower().startswith("non") or str(pred) == "0" else "#F4CCCC"
+        st.markdown(
+            f"""
+            <div style="background-color:{color};padding:1rem;border-radius:0.5rem;">
+                <h4 style="margin:0;">🧠 Model-Estimated Classification: <b>{pred}</b></h4>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         if hasattr(clf_pretrained, "predict_proba"):
             proba = clf_pretrained.predict_proba(X_demo)[0]
-            st.write("Class probabilities:", dict(zip(getattr(clf_pretrained, "classes_", []), map(float, proba))))
+            probs = {str(k): float(v) for k, v in zip(getattr(clf_pretrained, "classes_", []), proba)}
+            st.write("**Confidence distribution across outcome classes:**")
+            st.json(safe_json(probs))
 
 st.markdown("---")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Technical Tabs
+# TECHNICAL TABS
 # ──────────────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4 = st.tabs(["Data Preview", "Signals", "Windowed Features", "Train / Evaluate"])
 
@@ -393,7 +417,7 @@ with tab3:
             feats_df["label"] = labels
             st.write("Feature table (first 30 rows):")
             st.dataframe(feats_df.head(30))
-            st.session_state["feats_df"] = feats_df  # cache for training tab
+            st.session_state["feats_df"] = feats_df
         else:
             st.info("Increase the window or step to extract features.")
 
@@ -402,7 +426,6 @@ with tab4:
     if df_raw is None:
         st.info("Load data to train/evaluate.")
     else:
-        # Use windowed features if available; else single-window summary
         feats_df = st.session_state.get("feats_df")
         if feats_df is None:
             single = compute_features(df_raw)
