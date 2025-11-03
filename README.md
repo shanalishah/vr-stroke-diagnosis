@@ -56,5 +56,6 @@ Code files:
 ## Outcome
 
 The prototype demonstrates the **potential of motion-based diagnostics** for early stroke detection and could be extended for remote neurological assessment.
-Streamlit: 
+Streamlit Demo:
+
 ---
