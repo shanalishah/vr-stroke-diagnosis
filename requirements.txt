@@ -1,0 +1,19 @@
+# Core Libraries
+numpy==1.26.0
+pandas==2.2.1
+matplotlib==3.8.4
+seaborn==0.13.2
+
+# Machine Learning
+scikit-learn==1.5.0
+joblib==1.4.0
+
+# Notebook / Visualization
+jupyterlab==4.2.0
+notebook==7.1.2
+
+# Optional: for signal or motion data handling
+scipy==1.13.0
+
+# Optional: if you plan to deploy or demonstrate with Streamlit
+streamlit==1.35.0
