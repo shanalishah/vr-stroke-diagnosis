@@ -1,4 +1,4 @@
-# app.py — VR Stroke Screening (simple, friendly, folder-aware)
+# app.py — VR Stroke Screening
 
 import os
 import numpy as np
@@ -8,7 +8,7 @@ import streamlit as st
 import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="VR Stroke Screening", layout="centered")
-st.title("🧠 VR Stroke Screening")
+st.title("VR Stroke Screening")
 
 # -----------------------------------
 # Paths (checks models/ then root; data/ then root)
@@ -214,4 +214,4 @@ else:
 # -----------------------------------
 # Footer
 # -----------------------------------
-st.caption("Demo — for education and research only.")
+# st.caption("Demo — for education and research only.")
