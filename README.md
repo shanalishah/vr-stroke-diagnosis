@@ -56,6 +56,6 @@ Code files:
 ## Outcome
 
 The prototype demonstrates the **potential of motion-based diagnostics** for early stroke detection and could be extended for remote neurological assessment.
-Streamlit Demo:
+Streamlit Demo: https://vr-stroke-diagnosis.streamlit.app/#model-estimated-classification-0
 
 ---
