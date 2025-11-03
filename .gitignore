@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+*.egg
+*.log
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb_checkpoint
+
+# Data and Models (keep large local files out of normal Git tracking)
+*.csv
+*.tsv
+*.txt
+*.xlsx
+*.zip
+*.gz
+*.pkl
+*.joblib
+*.h5
+*.npy
+*.npz
+
+# (Uncomment below if you want to *exclude* raw VR logs but keep CSVs)
+# data/*.txt
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# OS files
+ehthumbs.db
+desktop.ini
+
+# Streamlit cache (if you later deploy a demo)
+.streamlit/
